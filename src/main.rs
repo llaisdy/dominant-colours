@@ -61,9 +61,7 @@ fn save_color_swatch(colours: &Vec<ColorInfo>, output_file: &str) -> Result<(), 
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-    
+pub fn analyze_image(args: &Args) -> Result<Vec<ColorInfo>, Box<dyn std::error::Error>> {
     println!("Loading image...");
     let img = image::open(&args.filename)?;
     
@@ -114,9 +112,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             percentage: (cluster_sizes[i] as f64 / total_pixels) * 100.0,
         })
         .collect();
-    
+
     // Sort by percentage (descending)
     colours.sort_by(|a, b| b.percentage.partial_cmp(&a.percentage).unwrap());
+
+    Ok(colours)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
+    let colours = analyze_image(&args)?;
 
     // Print results
     println!("\nDominant colours (sorted by prevalence):");
@@ -134,4 +140,128 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+    use std::path::PathBuf;
+    use image::{RgbImage, Rgb};
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_arg_parsing() {
+        let args = Args::parse_from(["program", "test.jpg"]);
+        assert_eq!(args.filename, "test.jpg");
+        assert_eq!(args.colours, 6); // default value
+        assert!(!args.swatch); // default false
+
+        let args = Args::parse_from(["program", "-c", "8", "test.jpg"]);
+        assert_eq!(args.colours, 8);
+
+        let args = Args::parse_from(["program", "--swatch", "-o", "custom.svg", "test.jpg"]);
+        assert!(args.swatch);
+        assert_eq!(args.output, "custom.svg");
+    }
+
+    #[test]
+    fn test_color_swatch_generation() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempdir()?;
+        let output_path = temp_dir.path().join("test_swatch.svg");
+
+        let colors = vec![
+            ColorInfo {
+                rgb: [255, 0, 0],
+                percentage: 50.0,
+            },
+            ColorInfo {
+                rgb: [0, 255, 0],
+                percentage: 30.0,
+            },
+            ColorInfo {
+                rgb: [0, 0, 255],
+                percentage: 20.0,
+            },
+        ];
+
+        save_color_swatch(&colors, output_path.to_str().unwrap())?;
+
+        // Verify file exists and contains expected content
+        let content = std::fs::read_to_string(output_path)?;
+        assert!(content.contains("rgb(255, 0, 0)"));
+        assert!(content.contains("rgb(0, 255, 0)"));
+        assert!(content.contains("rgb(0, 0, 255)"));
+        assert!(content.contains("50.0%"));
+        assert!(content.contains("30.0%"));
+        assert!(content.contains("20.0%"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dominant_color_extraction() -> Result<(), Box<dyn std::error::Error>> {
+        // Create a test image with known colors
+        let mut img = RgbImage::new(100, 100);
+
+        // Fill image with 50% red, 30% green, 20% blue
+        for y in 0..100 {
+            for x in 0..100 {
+                let pixel = if y < 50 {
+                    Rgb([255, 0, 0])      // Red (50%)
+                } else if y < 80 {
+                    Rgb([0, 255, 0])      // Green (30%)
+                } else {
+                    Rgb([0, 0, 255])      // Blue (20%)
+                };
+                img.put_pixel(x, y, pixel);
+            }
+        }
+
+        // Save temporary image
+        let temp_dir = tempdir()?;
+        let image_path = temp_dir.path().join("test_image.png");
+        img.save(&image_path)?;
+
+        // Run analysis
+        let args = Args {
+            filename: image_path.to_str().unwrap().to_string(),
+            colours: 3,
+            swatch: false,
+            output: "".to_string(),
+        };
+
+        let colors = analyze_image(&args)?;
+
+        // Verify results (with some tolerance for k-means variation)
+        assert!(colors.len() == 3);
+
+        // Sort colors by percentage for stable comparison
+        let mut sorted_colors = colors;
+        sorted_colors.sort_by(|a, b| b.percentage.partial_cmp(&a.percentage).unwrap());
+
+        // Check percentages (with tolerance)
+        assert!((sorted_colors[0].percentage - 50.0).abs() < 5.0);
+        assert!((sorted_colors[1].percentage - 30.0).abs() < 5.0);
+        assert!((sorted_colors[2].percentage - 20.0).abs() < 5.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_error_handling() {
+        // Test non-existent file
+        let result = image::open("non_existent.jpg");
+        assert!(result.is_err());
+
+        // Test invalid color count
+        let args = Args {
+            filename: "test.jpg".to_string(),
+            colours: 0,  // Invalid number of colors
+            swatch: false,
+            output: "".to_string(),
+        };
+
+        let result = analyze_image(&args);
+        assert!(result.is_err());
+    }
 }
