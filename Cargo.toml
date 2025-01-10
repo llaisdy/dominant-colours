@@ -2,6 +2,12 @@
 name = "dominant-colours"
 version = "0.1.0"
 edition = "2021"
+authors = ["Ivan Uemlianin <ivan@llaisdy.co.uk>"]
+description = "Extract dominant colours from images using k-means clustering"
+license = "MIT"
+repository = "https://github.com/llaisdy/dominant-colours"
+keywords = ["color", "image", "clustering"]
+categories = ["command-line-utilities", "multimedia::images"]
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
